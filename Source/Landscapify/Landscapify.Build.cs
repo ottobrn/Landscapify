@@ -8,7 +8,7 @@ public class Landscapify : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "AssetRegistry", "AssetTools", "UnrealEd" });
 		
 		PrivateDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent" });
 

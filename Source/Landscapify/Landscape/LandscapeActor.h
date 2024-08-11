@@ -39,6 +39,10 @@ private:
 	
 	bool IsDirty(const int32 CurrentLandscapeSize) const;
 
+	void GenerateTextureHeightMap(const FMeshSectionData& SectionData);
+
+	void SaveTexture(UPackage* CreatedPackage, UTexture2D* CreatedTexture);
+
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FLandscapeParameters LandscapeSettings;
