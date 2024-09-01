@@ -39,8 +39,10 @@ private:
 	
 	bool IsDirty(const int32 CurrentLandscapeSize) const;
 
-	void GenerateTextureHeightMap(const FMeshSectionData& SectionData);
+	void GenerateHeightMapImage(const FMeshSectionData& SectionData);
 
+	void CreateTexture(const TArray<uint8> TextureData);
+	
 	void SaveTexture(UPackage* CreatedPackage, UTexture2D* CreatedTexture);
 
 protected:

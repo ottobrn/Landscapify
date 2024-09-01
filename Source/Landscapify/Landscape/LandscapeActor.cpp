@@ -5,6 +5,7 @@
 
 #include "AssetToolsModule.h"
 #include "ContentBrowserModule.h"
+#include "EditorAssetLibrary.h"
 #include "FileHelpers.h"
 #include "LandscapifyStructLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -60,8 +61,8 @@ void ALandscapeActor::GenerateLandscape()
 		DiamondSquareStep(LandscapeSection, LandscapeSize - 1, LandscapeSettings.HeightMultiplier);
 
 		LandscapeSection.Index = Index;
-		LandscapeSections.Emplace(LandscapeSection);
-		LandscapeSettings.LandscapeMeshComponent->CreateMeshSection_LinearColor(Index, LandscapeSection.Vertices, LandscapeSection.Triangles, LandscapeSection.Normals, LandscapeSection.UV, LandscapeSection.VertexColor, TArray<FProcMeshTangent>(), true);
+		//LandscapeSections.Emplace(LandscapeSection);
+		//LandscapeSettings.LandscapeMeshComponent->CreateMeshSection_LinearColor(Index, LandscapeSection.Vertices, LandscapeSection.Triangles, LandscapeSection.Normals, LandscapeSection.UV, LandscapeSection.VertexColor, TArray<FProcMeshTangent>(), true);
 	}
 }
 
@@ -144,7 +145,7 @@ void ALandscapeActor::DiamondSquareStep(FMeshSectionData& SectionData, int32 Cur
 {
 	if (CurrentStep <= 1)
 	{
-		GenerateTextureHeightMap(SectionData);
+		GenerateHeightMapImage(SectionData);
 		return;
 	}
 
@@ -194,7 +195,7 @@ bool ALandscapeActor::IsDirty(const int32 CurrentLandscapeSize) const
 	return CurrentLandscapeSize != (LandscapeSize * LandscapeSize);
 }
 
-void ALandscapeActor::GenerateTextureHeightMap(const FMeshSectionData& SectionData)
+void ALandscapeActor::GenerateHeightMapImage(const FMeshSectionData& SectionData)
 {
 	TArray<float> Heights;
 	for (const FVector& Vertex : SectionData.Vertices)
@@ -208,71 +209,74 @@ void ALandscapeActor::GenerateTextureHeightMap(const FMeshSectionData& SectionDa
 
 		const float& MaxHeight = Heights[0];
 		const float& MinHeight = Heights[Heights.Num() - 1];
-
-		const FString FullPackagePath = TEXT("/Game/Textures/T_HeightMap");
-		const FString AssetName = FPackageName::ObjectPathToPackageName(FullPackagePath);
 		
-		UPackage* Package = CreatePackage(*FullPackagePath);
-		if (!Package)
-		{
-			return;
-		}
-		
-		UTextureFactory* TextureFactory = NewObject<UTextureFactory>();
-		if (!TextureFactory)
-		{
-			return;
-		}
-		TextureFactory->AddToRoot();
-		TextureFactory->SuppressImportOverwriteDialog();
-		
-		UTexture2D* HeightMapTexture = TextureFactory->CreateTexture2D(Package, *AssetName, RF_Public | RF_Standalone | RF_MarkAsRootSet);
-		TextureFactory->RemoveFromRoot();
-
-		if (!HeightMapTexture)
-		{
-			return;
-		}
-		HeightMapTexture->SRGB = false;
-
-		TArray<FColor> TextureData;
-		TextureData.SetNum(LandscapeSize * LandscapeSize);
+		TArray<uint8> GrayscaleData;
+		GrayscaleData.SetNumUninitialized(LandscapeSize * LandscapeSize);
 
 		for (int32 Y = 0; Y < LandscapeSize; Y++)
 		{
 			for (int32 X = 0; X < LandscapeSize; X++)
 			{
 				int32 Index = Y * LandscapeSize + X;
-				if (Heights.IsValidIndex(Index))
-				{
-					float Height = Heights[Index];
-					uint8 NormalizedHeight = static_cast<uint8>((Height - MinHeight) / (MaxHeight - MinHeight) * 255.0f);
+				
+				float Height = SectionData.Vertices[Index].Z;
+				uint8 NormalizedHeight = static_cast<uint8>((Height - MinHeight) / (MaxHeight - MinHeight) * 255.0f);
 
-					TextureData[Index] = FColor(NormalizedHeight, NormalizedHeight, NormalizedHeight, 255.f);
-				}
+				// TODO: Since condition Y/X < LandscapeSize, it will fill an array as (LandscapeSize - 1) * (LandscapeSize - 1) so height map will be incorrect
+				GrayscaleData[Index] = NormalizedHeight;
 			}
 		}
-		//FTexture2DMipMap& Mip = HeightMapTexture->GetPlatformData()->Mips[0];
-		//void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
-		//FMemory::Memcpy(Data, TextureData.GetData(), TextureData.Num() * sizeof(FColor));
-		//Mip.BulkData.Unlock();
-		
-		//HeightMapTexture->Source.Init(HeightMapTexture->GetSizeX(), HeightMapTexture->GetSizeY(), 1, 1, TSF_BGRA8, HeightMapTexture->Source.LockMip(0));
-		HeightMapTexture->UpdateResource();
-		SaveTexture(Package, HeightMapTexture);
+		CreateTexture(GrayscaleData);
 	}
+}
+
+void ALandscapeActor::CreateTexture(const TArray<uint8> TextureData)
+{
+	UTextureFactory* TextureFactory = NewObject<UTextureFactory>();
+	if (!TextureFactory)
+	{
+		return;
+	}
+	TextureFactory->AddToRoot();
+	TextureFactory->SuppressImportOverwriteDialog();
+
+	// TODO: Refactor paths and name!!!!
+	const FString PackageName = TEXT("/Game/Textures");
+	const FString PackagePath = PackageName + TEXT("/T_HeightMap");
+
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		return;
+	}
+
+	FString AssetName;
+	FString NewPackagePath;
+	IAssetTools::Get().CreateUniqueAssetName(PackagePath, FString(), NewPackagePath, AssetName);
+
+	UTexture2D* HeightMapTexture = TextureFactory->CreateTexture2D(Package, *AssetName, RF_Public | RF_Standalone);
+	HeightMapTexture->Source.Init(LandscapeSize, LandscapeSize, 1, 1, TSF_G16, (uint8*)TextureData.GetData());
+	HeightMapTexture->UpdateResource();
+	HeightMapTexture->PostEditChange();
+	TextureFactory->RemoveFromRoot();
+	
+	SaveTexture(Package, HeightMapTexture);
 }
 
 void ALandscapeActor::SaveTexture(UPackage* CreatedPackage, UTexture2D* CreatedTexture)
 {
-	CreatedTexture->UpdateResource();
-	CreatedTexture->PostEditChange();
-	
-	FAssetRegistryModule::AssetCreated(CreatedTexture);
-	if (CreatedPackage->MarkPackageDirty())
+	if (CreatedTexture->MarkPackageDirty())
 	{
-		UEditorLoadingAndSavingUtils::SavePackages(TArray<UPackage*> { CreatedPackage }, false);
-		FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-		ContentBrowserModule.Get().SyncBrowserToAssets(TArray<UObject*>{ CreatedTexture });
+		const FString FullPackagePath = TEXT("/Game/Textures/T_HeightMap");
+		const FString PackageFileName = FPackageName::LongPackageNameToFilename(FullPackagePath, FPackageName::GetAssetPackageExtension());
+	
+		if (UPackage::SavePackage(CreatedPackage, CreatedTexture, EObjectFlags::RF_Public | RF_Standalone, *PackageFileName))
+		{
+			// Регистрируем ассет в системе
+			FAssetRegistryModule::AssetCreated(CreatedTexture);
+
+			// Обновляем Content Browser и загружаем ассет
+			UEditorAssetLibrary::SyncBrowserToObjects({ FullPackagePath });
+		}
 	}
 }
