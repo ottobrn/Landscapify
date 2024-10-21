@@ -21,6 +21,14 @@ enum ELandscapeSize : uint8
 	None = 0
 };
 
+UENUM(BlueprintType)
+enum EAlgorithm : uint8
+{
+	DiamondSquare,
+	PerlinNoise
+};
+
+
 USTRUCT(BlueprintType)
 struct FMeshSectionData
 {
@@ -30,23 +38,10 @@ struct FMeshSectionData
 	{}
 
 public:
-	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
-	int32 Index = 0;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
-	TArray<int32> Triangles = {};
-
+	// Now only the array with vertices is filled,
+	// the rest was removed because I decided to generate a texture and then use it as a height map in Landscape.
 	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
 	TArray<FVector> Vertices = {};
-
-	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
-	TArray<FVector> Normals = {};
-
-	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
-	TArray<FVector2D> UV = {};
-
-	UPROPERTY(BlueprintReadOnly, Category = "Landscape")
-	TArray<FLinearColor> VertexColor = {};
 };
 
 USTRUCT(BlueprintType)
@@ -54,38 +49,70 @@ struct FLandscapeParameters
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape")
-	TObjectPtr<UProceduralMeshComponent> LandscapeMeshComponent = nullptr;
-	
+	// This enum allows the user to select a landscape size from the available options in ELandscapeSize.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", DisplayName = "LandscapeSize")
 	TEnumAsByte<ELandscapeSize> LandscapeSizeEnum = ELandscapeSize::None;
 
+	// This enum allows the user to choose the algorithm used for landscape generation,
+	// defaulting to the Diamond-Square algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", DisplayName = "LandscapeSize")
+	TEnumAsByte<EAlgorithm> GeneratorAlgorithm = EAlgorithm::DiamondSquare;
+
+	// Seed for random number generation, used in landscape algorithms.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape")
+	int64 Seed = 1234567890;
+
+	// Overrides the randomly generated corner heights when using the Diamond-Square algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape|DiamondSquare", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::DiamondSquare", EditConditionHides))
 	bool bOverrideHeight = false;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "!bOverrideHeight"))
+
+	// Maximum random initial height for the Diamond-Square algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "!bOverrideHeight && GeneratorAlgorithm == EAlgorithm::DiamondSquare"))
 	int32 MaxRandomInitHeight = 100.f;
-	
+
+	// Height of the top-left corner when overriding heights in the Diamond-Square algorithm.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "bOverrideHeight", EditConditionHides))
 	float TopLeftHeight = 1000.f;
 
+	// Height of the top-right corner when overriding heights in the Diamond-Square algorithm.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "bOverrideHeight", EditConditionHides))
 	float TopRightHeight = 1000.f;
-	
+
+	// Height of the bottom-left corner when overriding heights in the Diamond-Square algorithm.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "bOverrideHeight", EditConditionHides))
 	float BottomLeftHeight = 1000.f;
-	
+
+	// Height of the bottom-right corner when overriding heights in the Diamond-Square algorithm.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "bOverrideHeight", EditConditionHides))
 	float BottomRightHeight = 1000.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape")
-	int32 Seed = 1234567890;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape")
+	// Multiplier for the height values in the Diamond-Square algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::DiamondSquare", EditConditionHides))
 	float HeightMultiplier = 50.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape")
+	// Size of each vertex in the landscape mesh for the Diamond-Square algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::DiamondSquare", EditConditionHides))
 	float VertexSize = 10.f;
+
+	// Scale of the noise pattern used in the Perlin noise algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::PerlinNoise", EditConditionHides))
+	float NoiseScale = 0.1f;
+
+	// Number of octaves used in the Perlin noise algorithm to add detail.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::PerlinNoise", EditConditionHides))
+	int32 Octaves = 4;
+
+	// Persistence controls the amplitude decrease in each octave of the Perlin noise algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::PerlinNoise", EditConditionHides))
+	float Persistence = 0.5f;
+
+	// Lacunarity controls the frequency increase in each octave of the Perlin noise algorithm.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::PerlinNoise", EditConditionHides))
+	float Lacunarity = 2.0f;
+
+	// Maximum height that the Perlin noise algorithm can generate.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Landscape", meta = (EditCondition = "GeneratorAlgorithm == EAlgorithm::PerlinNoise", EditConditionHides))
+	float MaxHeight = 500.f;
 };
 
 

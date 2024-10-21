@@ -1,30 +1,13 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "LandscapeActor.h"
-
-#include "AssetToolsModule.h"
-#include "ContentBrowserModule.h"
-#include "EditorAssetLibrary.h"
-#include "FileHelpers.h"
 #include "LandscapifyStructLibrary.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "IAssetTools.h"
-#include "IContentBrowserSingleton.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
-#include "EditorFramework/AssetImportData.h"
-#include "Factories/TextureFactory.h"
-#include "UObject/SavePackage.h"
 
 ALandscapeActor::ALandscapeActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
-
-	LandscapeSettings.LandscapeMeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("LandscapeMeshComponent"));
-	LandscapeSettings.LandscapeMeshComponent->SetupAttachment(RootComponent);
-	LandscapeSettings.LandscapeMeshComponent->bUseComplexAsSimpleCollision = true;
-	LandscapeSettings.LandscapeMeshComponent->bUseAsyncCooking = true;
 }
 
 void ALandscapeActor::BeginPlay()
@@ -35,55 +18,34 @@ void ALandscapeActor::BeginPlay()
 void ALandscapeActor::GenerateLandscape()
 {
 	const int32 SelectedSize = LandscapeSettings.LandscapeSizeEnum.GetIntValue();
-	LandscapeSize = static_cast<int32>(FMath::Pow(2.f, static_cast<double>(SelectedSize))) + 1; // Weird casting ^^
-	if (LandscapeSections.Num())
-	{
-		for (int32 Index = 0; Index < LandscapeSections.Num(); Index++)
-		{
-			if (!IsDirty(LandscapeSections[Index].Vertices.Num()))
-			{
-				UpdateLandscapeSection(LandscapeSections[Index]);
-				return;
-			}
-		}
-	}
-
-	// TODO: In big sized map we need to divide it into a section. For now it works as one peace of mesh
+	LandscapeSize = static_cast<int32>(FMath::Pow(2.f, static_cast<double>(SelectedSize))) + 1;
+	
 	FMath::SRandInit(LandscapeSettings.Seed);
-	for (int32 Index = 0; Index < 1; Index++)
+	
+	FMeshSectionData LandscapeSection;
+	LandscapeSection.Vertices.AddDefaulted(LandscapeSize * LandscapeSize);
+
+	GenerateHeightMap(LandscapeSection.Vertices);
+
+	// Select what kind of algo will be processed
+	if (LandscapeSettings.GeneratorAlgorithm == EAlgorithm::DiamondSquare)
 	{
-		FMeshSectionData LandscapeSection;
-		LandscapeSection.Vertices.AddDefaulted(LandscapeSize * LandscapeSize);
-
-		GenerateHeightMap(LandscapeSection.Vertices, LandscapeSection.UV);
-		GenerateProceduralMeshData(LandscapeSection.Triangles, LandscapeSection.Normals);
-
 		DiamondSquareStep(LandscapeSection, LandscapeSize - 1, LandscapeSettings.HeightMultiplier);
-
-		LandscapeSection.Index = Index;
-		//LandscapeSections.Emplace(LandscapeSection);
-		//LandscapeSettings.LandscapeMeshComponent->CreateMeshSection_LinearColor(Index, LandscapeSection.Vertices, LandscapeSection.Triangles, LandscapeSection.Normals, LandscapeSection.UV, LandscapeSection.VertexColor, TArray<FProcMeshTangent>(), true);
+	}
+	else
+	{
+		PerlinNoise(LandscapeSection);
 	}
 }
 
-void ALandscapeActor::ResetLandscape()
+void ALandscapeActor::GenerateHeightMap(TArray<FVector>& OutVertices)
 {
-	LandscapeSections.Reset();
-}
-
-void ALandscapeActor::GenerateHeightMap(TArray<FVector>& OutVertices, TArray<FVector2D>& OutUVs)
-{
-	OutUVs.SetNum(LandscapeSize * LandscapeSize);
-	ParallelFor(LandscapeSize, [this, &OutVertices, &OutUVs](int32 YIndex)
+	ParallelFor(LandscapeSize, [this, &OutVertices](int32 YIndex)
 	{
 		for (int32 X = 0; X < LandscapeSize; X++)
 		{
 			int32 Index = X + YIndex * LandscapeSize;
 			OutVertices[Index] = FVector(X * LandscapeSettings.VertexSize, YIndex * LandscapeSettings.VertexSize, OutVertices[Index].Z);
-
-			float U = static_cast<float>(X) / static_cast<float>(LandscapeSize - 1);
-			float V = static_cast<float>(YIndex) / static_cast<float>(LandscapeSize - 1);
-			OutUVs[Index] = FVector2D(U, V);
 		}
 	});
 	RandomizeInitPoint(OutVertices);
@@ -108,37 +70,10 @@ void ALandscapeActor::RandomizeInitPoint(TArray<FVector>& OutVertices)
 	}
 }
 
-void ALandscapeActor::GenerateProceduralMeshData(TArray<int32>& OutTriangles, TArray<FVector>& OutNormals)
-{
-	const int32 NumSquares = LandscapeSize - 1;
-	OutTriangles.AddDefaulted(NumSquares * NumSquares * 6);
-
-	ParallelFor(LandscapeSize - 1, [this, &OutTriangles](int32 YIndex)
-	{
-		for (int32 X = 0; X < LandscapeSize - 1; X++)
-		{
-			int32 TopLeft = (LandscapeSize * YIndex) + X;
-			int32 TopRight = TopLeft + 1;
-			int32 BottomLeft = TopLeft + LandscapeSize;
-			int32 BottomRight = BottomLeft + 1;
-
-			int32 TriangleIndex = 6 * (YIndex * (LandscapeSize - 1) + X);
-			OutTriangles[TriangleIndex] = TopLeft;
-			OutTriangles[TriangleIndex + 1] = BottomLeft;
-			OutTriangles[TriangleIndex + 2] = TopRight;
-
-			OutTriangles[TriangleIndex + 3] = TopRight;
-			OutTriangles[TriangleIndex + 4] = BottomLeft;
-			OutTriangles[TriangleIndex + 5] = BottomRight;
-		}
-	});
-}
-
 void ALandscapeActor::UpdateLandscapeSection(FMeshSectionData& InSection)
 {
 	RandomizeInitPoint(InSection.Vertices);
 	DiamondSquareStep(InSection, LandscapeSize - 1, LandscapeSettings.HeightMultiplier);
-	LandscapeSettings.LandscapeMeshComponent->UpdateMeshSection_LinearColor(InSection.Index, InSection.Vertices, InSection.Normals, InSection.UV, InSection.VertexColor, TArray<FProcMeshTangent>());
 }
 
 void ALandscapeActor::DiamondSquareStep(FMeshSectionData& SectionData, int32 CurrentStep, float Scale)
@@ -190,9 +125,44 @@ void ALandscapeActor::DiamondSquareStep(FMeshSectionData& SectionData, int32 Cur
 	DiamondSquareStep(SectionData, CurrentStep / 2, Scale / 2.f);
 }
 
-bool ALandscapeActor::IsDirty(const int32 CurrentLandscapeSize) const
+void ALandscapeActor::PerlinNoise(FMeshSectionData& SectionData)
 {
-	return CurrentLandscapeSize != (LandscapeSize * LandscapeSize);
+	ParallelFor(SectionData.Vertices.Num(), [this, &SectionData](int32 Index)
+	{
+		FVector& Vertex = SectionData.Vertices[Index];
+		float NoiseValue = GetPerlinNoiseValue(Vertex.X, Vertex.Y);
+		Vertex.Z = (NoiseValue + 1) / 2.0f * LandscapeSettings.MaxHeight;
+
+		// TODO: [REMOVE] Island test
+		// float DistanceFromCenter = FVector2D(Vertex.X - LandscapeSize / 2.0f, Vertex.Y - LandscapeSize / 2.0f).Size();
+		// Vertex.Z = (DistanceFromCenter < LandscapeSize / 2) ? HeightValue : -100.f;
+	});
+	GenerateHeightMapImage(SectionData);
+}
+
+float ALandscapeActor::GetPerlinNoiseValue(float X, float Y)
+{
+	FRandomStream RandomStream(LandscapeSettings.Seed);
+	float Amplitude = 1.0f;
+	float Frequency = 1.0f;
+	float NoiseHeight = 0.0f;
+
+	float OffsetX = RandomStream.FRandRange(-10000.0f, 10000.0f);
+	float OffsetY = RandomStream.FRandRange(-10000.0f, 10000.0f);
+	
+	for (int i = 0; i < LandscapeSettings.Octaves; i++)
+	{
+		float SampleX = X * Frequency * LandscapeSettings.NoiseScale;
+		float SampleY = Y * Frequency * LandscapeSettings.NoiseScale;
+
+		float PerlinValue = FMath::PerlinNoise2D(FVector2D(SampleX + OffsetX , SampleY + OffsetY));
+		
+		NoiseHeight += PerlinValue * Amplitude;
+
+		Amplitude *= LandscapeSettings.Persistence;
+		Frequency *= LandscapeSettings.Lacunarity;
+	}
+	return NoiseHeight;
 }
 
 void ALandscapeActor::GenerateHeightMapImage(const FMeshSectionData& SectionData)
@@ -210,73 +180,40 @@ void ALandscapeActor::GenerateHeightMapImage(const FMeshSectionData& SectionData
 		const float& MaxHeight = Heights[0];
 		const float& MinHeight = Heights[Heights.Num() - 1];
 		
-		TArray<uint8> GrayscaleData;
-		GrayscaleData.SetNumUninitialized(LandscapeSize * LandscapeSize);
-
+		TArray<uint16> GrayscaleData;
+		GrayscaleData.AddUninitialized(LandscapeSize * LandscapeSize);
 		for (int32 Y = 0; Y < LandscapeSize; Y++)
 		{
 			for (int32 X = 0; X < LandscapeSize; X++)
 			{
 				int32 Index = Y * LandscapeSize + X;
 				
-				float Height = SectionData.Vertices[Index].Z;
-				uint8 NormalizedHeight = static_cast<uint8>((Height - MinHeight) / (MaxHeight - MinHeight) * 255.0f);
-
-				// TODO: Since condition Y/X < LandscapeSize, it will fill an array as (LandscapeSize - 1) * (LandscapeSize - 1) so height map will be incorrect
-				GrayscaleData[Index] = NormalizedHeight;
+				if (SectionData.Vertices.IsValidIndex(Index))
+				{
+					float Height = SectionData.Vertices[Index].Z;
+					GrayscaleData[Index] = static_cast<uint16>((Height - MinHeight) / (MaxHeight - MinHeight) * 65535.0f);
+				}
 			}
 		}
-		CreateTexture(GrayscaleData);
+		CreateAndSaveHeightMapTexture(GrayscaleData);
 	}
 }
 
-void ALandscapeActor::CreateTexture(const TArray<uint8> TextureData)
+void ALandscapeActor::CreateAndSaveHeightMapTexture(const TArray<uint16>& TextureData)
 {
-	UTextureFactory* TextureFactory = NewObject<UTextureFactory>();
-	if (!TextureFactory)
+	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
+	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+	if (!ImageWrapper.IsValid())
 	{
 		return;
 	}
-	TextureFactory->AddToRoot();
-	TextureFactory->SuppressImportOverwriteDialog();
-
-	// TODO: Refactor paths and name!!!!
-	const FString PackageName = TEXT("/Game/Textures");
-	const FString PackagePath = PackageName + TEXT("/T_HeightMap");
-
-	UPackage* Package = CreatePackage(*PackageName);
-	if (!Package)
-	{
-		return;
-	}
-
-	FString AssetName;
-	FString NewPackagePath;
-	IAssetTools::Get().CreateUniqueAssetName(PackagePath, FString(), NewPackagePath, AssetName);
-
-	UTexture2D* HeightMapTexture = TextureFactory->CreateTexture2D(Package, *AssetName, RF_Public | RF_Standalone);
-	HeightMapTexture->Source.Init(LandscapeSize, LandscapeSize, 1, 1, TSF_G16, (uint8*)TextureData.GetData());
-	HeightMapTexture->UpdateResource();
-	HeightMapTexture->PostEditChange();
-	TextureFactory->RemoveFromRoot();
+	// Texture will be created in ProjectDir/Content/Textures/
+	TArray<FString> FileNames;
+	const FString& FullPath = FPaths::ProjectContentDir() / TEXT("Textures/");
+	const FString& SearchPattern = FString::Printf(TEXT("*.%s"), *FString("png"));
 	
-	SaveTexture(Package, HeightMapTexture);
-}
+	IFileManager::Get().FindFiles(FileNames, *FullPath, *SearchPattern);
 
-void ALandscapeActor::SaveTexture(UPackage* CreatedPackage, UTexture2D* CreatedTexture)
-{
-	if (CreatedTexture->MarkPackageDirty())
-	{
-		const FString FullPackagePath = TEXT("/Game/Textures/T_HeightMap");
-		const FString PackageFileName = FPackageName::LongPackageNameToFilename(FullPackagePath, FPackageName::GetAssetPackageExtension());
-	
-		if (UPackage::SavePackage(CreatedPackage, CreatedTexture, EObjectFlags::RF_Public | RF_Standalone, *PackageFileName))
-		{
-			// Регистрируем ассет в системе
-			FAssetRegistryModule::AssetCreated(CreatedTexture);
-
-			// Обновляем Content Browser и загружаем ассет
-			UEditorAssetLibrary::SyncBrowserToObjects({ FullPackagePath });
-		}
-	}
+	ImageWrapper->SetRaw(TextureData.GetData(), TextureData.Num() * sizeof(uint16), LandscapeSize, LandscapeSize, ERGBFormat::Gray, 16);
+	FFileHelper::SaveArrayToFile(ImageWrapper->GetCompressed(), *(FPaths::ProjectContentDir() / FString::Printf(TEXT("Textures/T_HeightMap_%d.png"), FileNames.Num())));
 }
